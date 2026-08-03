@@ -1,17 +1,22 @@
-ARG ELIXIR_VERSION=1.14.5
+ARG BUILDER_IMAGE=hexpm/elixir:1.14.5-erlang-25.3.2.4-debian-bullseye-20230612
+ARG NODE_VERSION=20.20.2
+ARG NODE_SHA256=df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d
 ARG SOURCE_COMMIT
 
-FROM elixir:${ELIXIR_VERSION} as builder
+FROM ${BUILDER_IMAGE} AS builder
+
+ARG NODE_VERSION
+ARG NODE_SHA256
 
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 RUN apt-get update -q && apt-get --no-install-recommends install -y apt-utils ca-certificates build-essential libtool autoconf curl git
 
-RUN DEBIAN_CODENAME=$(sed -n 's/VERSION=.*(\(.*\)).*/\1/p' /etc/os-release) && \
-    curl -q https://deb.nodesource.com/gpgkey/nodesource.gpg.key | apt-key add - && \
-    echo "deb http://deb.nodesource.com/node_12.x $DEBIAN_CODENAME main" | tee /etc/apt/sources.list.d/nodesource.list && \
-    apt-get update -q && \
-    apt-get --no-install-recommends install -y nodejs
+RUN NODE_TARBALL=node-v${NODE_VERSION}-linux-x64.tar.xz && \
+    curl -fsSLO https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL} && \
+    echo "${NODE_SHA256}  ${NODE_TARBALL}" | sha256sum -c - && \
+    tar -xJf ${NODE_TARBALL} -C /usr/local --strip-components=1 --no-same-owner && \
+    rm ${NODE_TARBALL}
 
 RUN mix local.hex --force && \
     mix local.rebar --force && \
