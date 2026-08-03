@@ -9,6 +9,7 @@ defmodule BorsNG.Worker.BranchDeleter do
   """
 
   use GenServer
+  require Logger
   alias BorsNG.Worker.Batcher
   alias BorsNG.Database.Patch
   alias BorsNG.Database.Project
@@ -62,8 +63,8 @@ defmodule BorsNG.Worker.BranchDeleter do
     {:noreply, state}
   end
 
-  def handle_info({:retry_delete, patch, attempt}) do
-    GenServer.cast(__MODULE__, {:delete, patch, attempt})
+  def handle_info({:retry_delete, patch, attempt}, state) do
+    handle_cast({:delete, patch, attempt}, state)
   end
 
   defp delete_branch(conn, pr) do
@@ -97,15 +98,54 @@ defmodule BorsNG.Worker.BranchDeleter do
         end
 
       if delete do
-        GitHub.delete_branch!(conn, pr.head_ref)
-
         # only update the base for deletes if the delete succeeded
-        if update_base_for_deletes do
-          GitHub.get_open_prs_with_base!(conn, pr.head_ref)
-          |> Enum.map(&%{&1 | base_ref: pr.base_ref})
-          |> Enum.map(&GitHub.update_pr_base!(conn, &1))
+        case GitHub.delete_branch(conn, pr.head_ref) do
+          :ok ->
+            if update_base_for_deletes do
+              retarget_dependents(conn, pr)
+            end
+
+          error ->
+            Logger.warn([
+              "BranchDeleter: could not delete ",
+              pr.head_ref,
+              ": ",
+              inspect(error)
+            ])
         end
       end
+    end
+  end
+
+  defp retarget_dependents(conn, pr) do
+    case GitHub.get_open_prs_with_base(conn, pr.head_ref) do
+      {:ok, dependents} ->
+        Enum.each(dependents, &retarget(conn, &1, pr.base_ref))
+
+      error ->
+        Logger.warn([
+          "BranchDeleter: could not list PRs based on ",
+          pr.head_ref,
+          ": ",
+          inspect(error)
+        ])
+    end
+  end
+
+  defp retarget(conn, pr, base_ref) do
+    case GitHub.update_pr_base(conn, %{pr | base_ref: base_ref}) do
+      {:ok, _} ->
+        :ok
+
+      error ->
+        Logger.warn([
+          "BranchDeleter: could not retarget PR ",
+          to_string(pr.number),
+          " onto ",
+          base_ref,
+          ": ",
+          inspect(error)
+        ])
     end
   end
 

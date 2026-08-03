@@ -175,16 +175,28 @@ defmodule BorsNG.GitHub.ServerMock do
   end
 
   def do_handle_call(:update_pr_base, repo_conn, pr, state) do
-    with {:ok, repo} <- Map.fetch(state, repo_conn),
-         {:ok, pulls} <- Map.fetch(repo, :pulls) do
-      pulls = %{pulls | pr.number => pr}
-      repo = %{repo | pulls: pulls}
-      state = %{state | repo_conn => repo}
-      {{:ok, pr}, state}
-    end
-    |> case do
-      {{:ok, _}, _} = res -> res
-      _ -> {{:error, :update_pr}, state}
+    stacked =
+      state
+      |> Map.get(repo_conn, %{})
+      |> Map.get(:stacked_pulls, [])
+
+    if pr.number in stacked do
+      {{:error, :push, 422,
+        ~s({"message":"Validation Failed","errors":[{"message":"Cannot change the base ) <>
+          ~s(branch because the pull request is part of a stack.","resource":"PullRequest",) <>
+          ~s("field":"base","code":"invalid"}],"status":"422"})}, state}
+    else
+      with {:ok, repo} <- Map.fetch(state, repo_conn),
+           {:ok, pulls} <- Map.fetch(repo, :pulls) do
+        pulls = %{pulls | pr.number => pr}
+        repo = %{repo | pulls: pulls}
+        state = %{state | repo_conn => repo}
+        {{:ok, pr}, state}
+      end
+      |> case do
+        {{:ok, _}, _} = res -> res
+        _ -> {{:error, :update_pr}, state}
+      end
     end
   end
 

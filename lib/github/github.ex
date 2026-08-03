@@ -121,14 +121,17 @@ defmodule BorsNG.GitHub do
 
   @spec get_open_prs_with_base!(tconn, binary) :: [tpr]
   def get_open_prs_with_base!(repo_conn, base) do
-    {:ok, prs} =
-      GenServer.call(
-        BorsNG.GitHub,
-        {:get_open_prs_with_base, repo_conn, {base}},
-        Confex.fetch_env!(:bors, :api_github_timeout)
-      )
-
+    {:ok, prs} = get_open_prs_with_base(repo_conn, base)
     prs
+  end
+
+  @spec get_open_prs_with_base(tconn, binary) :: {:ok, [tpr]} | {:error, term}
+  def get_open_prs_with_base(repo_conn, base) do
+    GenServer.call(
+      BorsNG.GitHub,
+      {:get_open_prs_with_base, repo_conn, {base}},
+      Confex.fetch_env!(:bors, :api_github_timeout)
+    )
   end
 
   @spec push!(tconn, binary, binary) :: binary
@@ -166,14 +169,17 @@ defmodule BorsNG.GitHub do
 
   @spec delete_branch!(tconn, binary) :: :ok
   def delete_branch!(repo_conn, branch) do
-    :ok =
-      GenServer.call(
-        BorsNG.GitHub,
-        {:delete_branch, repo_conn, {branch}},
-        Confex.fetch_env!(:bors, :api_github_timeout)
-      )
-
+    :ok = delete_branch(repo_conn, branch)
     :ok
+  end
+
+  @spec delete_branch(tconn, binary) :: :ok | {:error, term}
+  def delete_branch(repo_conn, branch) do
+    GenServer.call(
+      BorsNG.GitHub,
+      {:delete_branch, repo_conn, {branch}},
+      Confex.fetch_env!(:bors, :api_github_timeout)
+    )
   end
 
   @spec merge_branch!(tconn, %{
