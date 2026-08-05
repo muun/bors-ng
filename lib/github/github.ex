@@ -167,6 +167,15 @@ defmodule BorsNG.GitHub do
     commit
   end
 
+  @spec get_repo_default_branch(tconn) :: {:ok, binary} | {:error, term}
+  def get_repo_default_branch(repo_conn) do
+    GenServer.call(
+      BorsNG.GitHub,
+      {:get_repo_default_branch, repo_conn, {}},
+      Confex.fetch_env!(:bors, :api_github_timeout)
+    )
+  end
+
   @spec get_branch_protected(tconn, binary) :: {:ok, boolean} | {:error, term}
   def get_branch_protected(repo_conn, branch) do
     GenServer.call(

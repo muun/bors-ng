@@ -216,6 +216,19 @@ defmodule BorsNG.GitHub.Server do
     end
   end
 
+  def do_handle_call(:get_repo_default_branch, {{:raw, token}, repo_xref}, {}) do
+    "token #{token}"
+    |> tesla_client()
+    |> Tesla.get!("/repositories/#{repo_xref}")
+    |> case do
+      %{body: raw, status: 200} ->
+        {:ok, Jason.decode!(raw)["default_branch"]}
+
+      %{body: body, status: status} ->
+        {:error, :get_repo_default_branch, status, body}
+    end
+  end
+
   def do_handle_call(:get_branch_protected, repo_conn, {branch}) do
     case get!(repo_conn, "branches/#{branch}") do
       %{body: raw, status: 200} ->

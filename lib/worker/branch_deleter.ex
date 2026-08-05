@@ -97,45 +97,61 @@ defmodule BorsNG.Worker.BranchDeleter do
             nil
         end
 
-      if delete do
-        # GitHub closes open PRs based on a branch as soon as it is deleted,
-        # so dependents have to be retargeted first
-        if deletable?(conn, pr.head_ref) do
-          if update_base_for_deletes do
-            retarget_dependents(conn, pr)
-          end
+      if delete && deletable?(conn, pr.head_ref) do
+        # GitHub closes open PRs based on a branch as soon as it is deleted, so
+        # dependents are retargeted first. If any of them could not be moved off
+        # the branch, it is left in place rather than closing their PRs.
+        case retarget_dependents(conn, pr, update_base_for_deletes) do
+          {:ok, retargeted} ->
+            case GitHub.delete_branch(conn, pr.head_ref) do
+              :ok ->
+                :ok
 
-          case GitHub.delete_branch(conn, pr.head_ref) do
-            :ok ->
-              :ok
+              error ->
+                Logger.warn([
+                  "BranchDeleter: could not delete ",
+                  pr.head_ref,
+                  ": ",
+                  inspect(error)
+                ])
 
-            error ->
-              Logger.warn([
-                "BranchDeleter: could not delete ",
-                pr.head_ref,
-                ": ",
-                inspect(error)
-              ])
-          end
+                restore_bases(conn, retargeted)
+            end
+
+          {:abort, retargeted} ->
+            Logger.warn([
+              "BranchDeleter: keeping ",
+              pr.head_ref,
+              ", its dependent PRs could not be retargeted"
+            ])
+
+            restore_bases(conn, retargeted)
         end
       end
     end
   end
 
   defp deletable?(conn, branch) do
-    case GitHub.get_branch_protected(conn, branch) do
-      {:ok, false} ->
-        true
+    with {:ok, default_branch} <- GitHub.get_repo_default_branch(conn),
+         {:ok, protected} <- GitHub.get_branch_protected(conn, branch) do
+      cond do
+        branch == default_branch ->
+          Logger.warn(["BranchDeleter: refusing to touch default branch ", branch])
+          false
 
-      {:ok, true} ->
-        Logger.warn(["BranchDeleter: refusing to touch protected branch ", branch])
-        false
+        protected ->
+          Logger.warn(["BranchDeleter: refusing to touch protected branch ", branch])
+          false
 
+        true ->
+          true
+      end
+    else
       error ->
         Logger.warn([
-          "BranchDeleter: could not check protection of ",
+          "BranchDeleter: could not confirm ",
           branch,
-          ", skipping: ",
+          " is deletable, skipping: ",
           inspect(error)
         ])
 
@@ -143,10 +159,18 @@ defmodule BorsNG.Worker.BranchDeleter do
     end
   end
 
-  defp retarget_dependents(conn, pr) do
+  defp retarget_dependents(_conn, _pr, false), do: {:ok, []}
+
+  defp retarget_dependents(conn, pr, true) do
     case GitHub.get_open_prs_with_base(conn, pr.head_ref) do
       {:ok, dependents} ->
-        Enum.each(dependents, &retarget(conn, &1, pr.base_ref))
+        Enum.reduce_while(dependents, {:ok, []}, fn dependent, {:ok, retargeted} ->
+          case retarget(conn, dependent, pr.base_ref) do
+            :ok -> {:cont, {:ok, [dependent | retargeted]}}
+            :stacked -> {:cont, {:ok, retargeted}}
+            :error -> {:halt, {:abort, retargeted}}
+          end
+        end)
 
       error ->
         Logger.warn([
@@ -155,6 +179,8 @@ defmodule BorsNG.Worker.BranchDeleter do
           ": ",
           inspect(error)
         ])
+
+        {:abort, []}
     end
   end
 
@@ -163,16 +189,58 @@ defmodule BorsNG.Worker.BranchDeleter do
       {:ok, _} ->
         :ok
 
+      {:error, _, 422, body} = error ->
+        if stack_managed?(body) do
+          Logger.warn([
+            "BranchDeleter: PR ",
+            to_string(pr.number),
+            " is part of a stack, leaving its base to GitHub"
+          ])
+
+          :stacked
+        else
+          log_retarget_error(pr, base_ref, error)
+          :error
+        end
+
       error ->
-        Logger.warn([
-          "BranchDeleter: could not retarget PR ",
-          to_string(pr.number),
-          " onto ",
-          base_ref,
-          ": ",
-          inspect(error)
-        ])
+        log_retarget_error(pr, base_ref, error)
+        :error
     end
+  end
+
+  defp stack_managed?(body) when is_binary(body) do
+    String.contains?(body, "part of a stack")
+  end
+
+  defp stack_managed?(_body), do: false
+
+  defp log_retarget_error(pr, base_ref, error) do
+    Logger.warn([
+      "BranchDeleter: could not retarget PR ",
+      to_string(pr.number),
+      " onto ",
+      base_ref,
+      ": ",
+      inspect(error)
+    ])
+  end
+
+  defp restore_bases(conn, dependents) do
+    Enum.each(dependents, fn dependent ->
+      case GitHub.update_pr_base(conn, dependent) do
+        {:ok, _} ->
+          :ok
+
+        error ->
+          Logger.warn([
+            "BranchDeleter: could not restore base of PR ",
+            to_string(dependent.number),
+            ": ",
+            inspect(error)
+          ])
+      end
+    end)
   end
 
   defp attempt_delay(attempt) do
