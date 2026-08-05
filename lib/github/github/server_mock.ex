@@ -180,23 +180,38 @@ defmodule BorsNG.GitHub.ServerMock do
       |> Map.get(repo_conn, %{})
       |> Map.get(:stacked_pulls, [])
 
-    if pr.number in stacked do
-      {{:error, :push, 422,
-        ~s({"message":"Validation Failed","errors":[{"message":"Cannot change the base ) <>
-          ~s(branch because the pull request is part of a stack.","resource":"PullRequest",) <>
-          ~s("field":"base","code":"invalid"}],"status":"422"})}, state}
-    else
-      with {:ok, repo} <- Map.fetch(state, repo_conn),
-           {:ok, pulls} <- Map.fetch(repo, :pulls) do
-        pulls = %{pulls | pr.number => pr}
-        repo = %{repo | pulls: pulls}
-        state = %{state | repo_conn => repo}
-        {{:ok, pr}, state}
-      end
-      |> case do
-        {{:ok, _}, _} = res -> res
-        _ -> {{:error, :update_pr}, state}
-      end
+    stored_state =
+      state
+      |> Map.get(repo_conn, %{})
+      |> Map.get(:pulls, %{})
+      |> Map.get(pr.number, %{})
+      |> Map.get(:state)
+
+    cond do
+      pr.number in stacked ->
+        {{:error, :push, 422,
+          ~s({"message":"Validation Failed","errors":[{"message":"Cannot change the base ) <>
+            ~s(branch because the pull request is part of a stack.","resource":"PullRequest",) <>
+            ~s("field":"base","code":"invalid"}],"status":"422"})}, state}
+
+      stored_state == :closed ->
+        {{:error, :push, 422,
+          ~s({"message":"Validation Failed","errors":[{"message":"Cannot change the base ) <>
+            ~s(branch of a closed pull request","resource":"PullRequest","field":"base",) <>
+            ~s("code":"invalid"}],"status":"422"})}, state}
+
+      true ->
+        with {:ok, repo} <- Map.fetch(state, repo_conn),
+             {:ok, pulls} <- Map.fetch(repo, :pulls) do
+          pulls = %{pulls | pr.number => pr}
+          repo = %{repo | pulls: pulls}
+          state = %{state | repo_conn => repo}
+          {{:ok, pr}, state}
+        end
+        |> case do
+          {{:ok, _}, _} = res -> res
+          _ -> {{:error, :update_pr}, state}
+        end
     end
   end
 
@@ -306,12 +321,21 @@ defmodule BorsNG.GitHub.ServerMock do
     end
   end
 
+  def do_handle_call(:get_branch_protected, repo_conn, {branch}, state) do
+    protected =
+      state
+      |> Map.get(repo_conn, %{})
+      |> Map.get(:protected_branches, [])
+
+    {{:ok, branch in protected}, state}
+  end
+
   def do_handle_call(:delete_branch, repo_conn, {branch}, state) do
     with {:ok, repo} <- Map.fetch(state, repo_conn),
          {:ok, branches} <- Map.fetch(repo, :branches) do
       branches = Map.delete(branches, branch)
       repo = %{repo | branches: branches}
-      state = %{state | repo_conn => repo}
+      state = %{state | repo_conn => close_prs_based_on(repo, branch)}
       {:ok, state}
     end
     |> case do
@@ -551,6 +575,26 @@ defmodule BorsNG.GitHub.ServerMock do
     |> case do
       {:ok, user} -> {{:ok, user}, state}
       _ -> {{:ok, nil}, state}
+    end
+  end
+
+  # GitHub closes any open PR whose base branch is deleted
+  defp close_prs_based_on(repo, branch) do
+    case Map.fetch(repo, :pulls) do
+      {:ok, pulls} ->
+        pulls =
+          Map.new(pulls, fn {number, pr} ->
+            if pr.state == :open and pr.base_ref == branch do
+              {number, %{pr | state: :closed}}
+            else
+              {number, pr}
+            end
+          end)
+
+        Map.put(repo, :pulls, pulls)
+
+      :error ->
+        repo
     end
   end
 end

@@ -167,6 +167,15 @@ defmodule BorsNG.GitHub do
     commit
   end
 
+  @spec get_branch_protected(tconn, binary) :: {:ok, boolean} | {:error, term}
+  def get_branch_protected(repo_conn, branch) do
+    GenServer.call(
+      BorsNG.GitHub,
+      {:get_branch_protected, repo_conn, {branch}},
+      Confex.fetch_env!(:bors, :api_github_timeout)
+    )
+  end
+
   @spec delete_branch!(tconn, binary) :: :ok
   def delete_branch!(repo_conn, branch) do
     :ok = delete_branch(repo_conn, branch)

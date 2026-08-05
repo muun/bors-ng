@@ -98,22 +98,48 @@ defmodule BorsNG.Worker.BranchDeleter do
         end
 
       if delete do
-        # only update the base for deletes if the delete succeeded
-        case GitHub.delete_branch(conn, pr.head_ref) do
-          :ok ->
-            if update_base_for_deletes do
-              retarget_dependents(conn, pr)
-            end
+        # GitHub closes open PRs based on a branch as soon as it is deleted,
+        # so dependents have to be retargeted first
+        if deletable?(conn, pr.head_ref) do
+          if update_base_for_deletes do
+            retarget_dependents(conn, pr)
+          end
 
-          error ->
-            Logger.warn([
-              "BranchDeleter: could not delete ",
-              pr.head_ref,
-              ": ",
-              inspect(error)
-            ])
+          case GitHub.delete_branch(conn, pr.head_ref) do
+            :ok ->
+              :ok
+
+            error ->
+              Logger.warn([
+                "BranchDeleter: could not delete ",
+                pr.head_ref,
+                ": ",
+                inspect(error)
+              ])
+          end
         end
       end
+    end
+  end
+
+  defp deletable?(conn, branch) do
+    case GitHub.get_branch_protected(conn, branch) do
+      {:ok, false} ->
+        true
+
+      {:ok, true} ->
+        Logger.warn(["BranchDeleter: refusing to touch protected branch ", branch])
+        false
+
+      error ->
+        Logger.warn([
+          "BranchDeleter: could not check protection of ",
+          branch,
+          ", skipping: ",
+          inspect(error)
+        ])
+
+        false
     end
   end
 

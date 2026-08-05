@@ -216,6 +216,16 @@ defmodule BorsNG.GitHub.Server do
     end
   end
 
+  def do_handle_call(:get_branch_protected, repo_conn, {branch}) do
+    case get!(repo_conn, "branches/#{branch}") do
+      %{body: raw, status: 200} ->
+        {:ok, Jason.decode!(raw)["protected"] == true}
+
+      %{body: body, status: status} ->
+        {:error, :get_branch_protected, status, body}
+    end
+  end
+
   def do_handle_call(:delete_branch, repo_conn, {branch}) do
     case delete!(repo_conn, "git/refs/heads/#{branch}") do
       %{status: 204} ->
