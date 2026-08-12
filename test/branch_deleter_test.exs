@@ -484,7 +484,7 @@ defmodule BorsNG.Worker.BranchDeleterTest do
     assert dependant_pr_base_ref == "update"
   end
 
-  test "deletes by patch when a stacked dependant PR cannot be retargeted", %{proj: proj} do
+  test "keeps the branch when a stacked dependant PR cannot be retargeted", %{proj: proj} do
     GitHub.ServerMock.put_state(%{
       {{:installation, 91}, 14} => %{
         branches: %{"master" => "ini", "update" => "foo", "update2" => "bar"},
@@ -556,11 +556,11 @@ defmodule BorsNG.Worker.BranchDeleterTest do
       |> Map.get(:branches)
       |> Map.keys()
 
-    assert branches == ["master", "update2"]
+    assert branches == ["master", "update", "update2"]
 
     dependant = installation |> Map.get(:pulls) |> Map.get(2)
 
-    assert dependant.base_ref == "master"
+    assert dependant.base_ref == "update"
     assert dependant.state == :open
   end
 

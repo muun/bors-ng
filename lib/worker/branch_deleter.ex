@@ -167,7 +167,6 @@ defmodule BorsNG.Worker.BranchDeleter do
         Enum.reduce_while(dependents, {:ok, []}, fn dependent, {:ok, retargeted} ->
           case retarget(conn, dependent, pr.base_ref) do
             :ok -> {:cont, {:ok, [dependent | retargeted]}}
-            :stacked -> {:cont, {:ok, retargeted}}
             :error -> {:halt, {:abort, retargeted}}
           end
         end)
@@ -189,41 +188,18 @@ defmodule BorsNG.Worker.BranchDeleter do
       {:ok, _} ->
         :ok
 
-      {:error, _, 422, body} = error ->
-        if stack_managed?(body) do
-          Logger.warn([
-            "BranchDeleter: PR ",
-            to_string(pr.number),
-            " is part of a stack, leaving its base to GitHub"
-          ])
-
-          :stacked
-        else
-          log_retarget_error(pr, base_ref, error)
-          :error
-        end
-
       error ->
-        log_retarget_error(pr, base_ref, error)
+        Logger.warn([
+          "BranchDeleter: could not retarget PR ",
+          to_string(pr.number),
+          " onto ",
+          base_ref,
+          ": ",
+          inspect(error)
+        ])
+
         :error
     end
-  end
-
-  defp stack_managed?(body) when is_binary(body) do
-    String.contains?(body, "part of a stack")
-  end
-
-  defp stack_managed?(_body), do: false
-
-  defp log_retarget_error(pr, base_ref, error) do
-    Logger.warn([
-      "BranchDeleter: could not retarget PR ",
-      to_string(pr.number),
-      " onto ",
-      base_ref,
-      ": ",
-      inspect(error)
-    ])
   end
 
   defp restore_bases(conn, dependents) do

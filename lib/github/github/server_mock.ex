@@ -603,29 +603,17 @@ defmodule BorsNG.GitHub.ServerMock do
     end
   end
 
-  # When a branch is deleted GitHub closes every open PR based on it, except
-  # stacked ones, which it retargets onto the base of the PR that owned the branch
+  # Deleting a ref through the API closes every open PR based on it. GitHub only
+  # retargets dependents when the branch is deleted through the web UI.
   defp close_prs_based_on(repo, branch) do
-    stacked = Map.get(repo, :stacked_pulls, [])
-
     case Map.fetch(repo, :pulls) do
       {:ok, pulls} ->
-        new_base =
-          Enum.find_value(pulls, fn {_number, pr} ->
-            if pr.head_ref == branch, do: pr.base_ref
-          end)
-
         pulls =
           Map.new(pulls, fn {number, pr} ->
-            cond do
-              pr.state != :open or pr.base_ref != branch ->
-                {number, pr}
-
-              number in stacked and not is_nil(new_base) ->
-                {number, %{pr | base_ref: new_base}}
-
-              true ->
-                {number, %{pr | state: :closed}}
+            if pr.state == :open and pr.base_ref == branch do
+              {number, %{pr | state: :closed}}
+            else
+              {number, pr}
             end
           end)
 
