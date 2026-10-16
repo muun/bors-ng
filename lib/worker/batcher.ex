@@ -847,9 +847,9 @@ defmodule BorsNG.Worker.Batcher do
     patches = Enum.map(patch_links, & &1.patch)
     state = Divider.split_batch(patch_links, batch)
 
-    if state == :retrying do
-      poll_after_delay(project)
-    end
+    # The poll that noticed the timeout only looked at this batch, so the waiting batches,
+    # retried or not, need a poll of their own to start
+    poll_after_delay(project)
 
     project
     |> get_repo_conn()

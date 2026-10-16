@@ -5458,6 +5458,115 @@ defmodule BorsNG.Worker.BatcherTest do
     [] = Repo.all(Batch.all_for_project(proj.id, :waiting))
   end
 
+  test "a timed out batch of one patch starts the next waiting batch", %{proj: proj} do
+    proj
+    |> Ecto.Changeset.change(batch_delay_sec: 0)
+    |> Repo.update!()
+
+    GitHub.ServerMock.put_state(%{
+      {{:installation, 91}, 14} => %{
+        branches: %{"master" => "ini", "staging" => "", "staging.tmp" => ""},
+        commits: %{},
+        comments: %{1 => [], 2 => []},
+        statuses: %{},
+        files: %{"staging.tmp" => %{"bors.toml" => ~s/status = [ "ci" ]/}},
+        pulls: %{
+          1 => %Pr{
+            number: 1,
+            title: "Test",
+            body: "Mess",
+            state: :open,
+            base_ref: "master",
+            head_sha: "N",
+            head_ref: "update",
+            base_repo_id: 14,
+            head_repo_id: 14,
+            merged: false
+          },
+          2 => %Pr{
+            number: 2,
+            title: "Test",
+            body: "Mess",
+            state: :open,
+            base_ref: "master",
+            head_sha: "O",
+            head_ref: "update",
+            base_repo_id: 14,
+            head_repo_id: 14,
+            merged: false
+          }
+        },
+        pr_commits: %{
+          1 => [
+            %GitHub.Commit{sha: "1234", author_name: "a", author_email: "e"}
+          ],
+          2 => [
+            %GitHub.Commit{sha: "5678", author_name: "b", author_email: "f"}
+          ]
+        }
+      }
+    })
+
+    patch =
+      %Patch{
+        project_id: proj.id,
+        pr_xref: 1,
+        commit: "N",
+        into_branch: "master"
+      }
+      |> Repo.insert!()
+
+    patch2 =
+      %Patch{
+        project_id: proj.id,
+        pr_xref: 2,
+        commit: "O",
+        into_branch: "master"
+      }
+      |> Repo.insert!()
+
+    Batcher.handle_cast({:reviewed, patch.id, "rvr"}, proj.id)
+    batch = Repo.get_by!(Batch, project_id: proj.id)
+
+    batch
+    |> Batch.changeset(%{last_polled: 0})
+    |> Repo.update!()
+
+    Batcher.handle_info({:poll, :once}, proj.id)
+    batch = Repo.get!(Batch, batch.id)
+    assert batch.state == :running
+
+    # Reviewed while the first batch runs, so it waits in a batch of its own
+    Batcher.handle_cast({:reviewed, patch2.id, "rvr"}, proj.id)
+
+    [batch2] = Repo.all(from(b in Batch, where: b.project_id == ^proj.id and b.id != ^batch.id))
+
+    assert batch2.state == :waiting
+
+    batch2
+    |> Batch.changeset(%{last_polled: 0})
+    |> Repo.update!()
+
+    # Each review scheduled a poll of its own
+    assert_receive {:poll, :once}, 2_000
+    assert_receive {:poll, :once}, 2_000
+    refute_received {:poll, :once}
+
+    batch
+    |> Batch.changeset(%{timeout_at: 0})
+    |> Repo.update!()
+
+    Batcher.handle_info({:poll, :once}, proj.id)
+    assert Repo.get!(Batch, batch.id).state == :error
+    assert Repo.get!(Batch, batch2.id).state == :waiting
+
+    # The timeout schedules the poll that starts the next batch, without waiting for the
+    # periodic one
+    assert_receive {:poll, :once}, 2_000
+    Batcher.handle_info({:poll, :once}, proj.id)
+    assert Repo.get!(Batch, batch2.id).state == :running
+  end
+
   test "infer from .travis.yml", %{proj: proj} do
     GitHub.ServerMock.put_state(%{
       {{:installation, 91}, 14} => %{
