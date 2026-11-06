@@ -1,4 +1,4 @@
-ARG BUILDER_IMAGE=hexpm/elixir:1.14.5-erlang-26.0.2-debian-bullseye-20230612
+ARG BUILDER_IMAGE=hexpm/elixir:1.14.5-erlang-26.0.2-debian-bookworm-20260610
 ARG NODE_VERSION=20.20.2
 ARG NODE_SHA256_amd64=df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d
 ARG NODE_SHA256_arm64=73093db209e4e9e09dd7d15a47aeaab1b74833830df03efa5f942a1122c5fa71
@@ -53,9 +53,9 @@ RUN if [ -d .git ]; then \
 
 ####
 
-FROM debian:bullseye-slim
+FROM debian:bookworm-slim
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 LANGUAGE=C.UTF-8
-RUN apt-get update -q && apt-get --no-install-recommends install -y git-core libssl1.1 curl apt-utils ca-certificates
+RUN apt-get update -q && apt-get --no-install-recommends install -y git-core libssl3 curl apt-utils ca-certificates
 
 ADD ./script/docker-entrypoint /usr/local/bin/bors-ng-entrypoint
 COPY --from=builder /src/_build/prod/rel/ /app/
