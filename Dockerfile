@@ -57,19 +57,15 @@ FROM debian:bookworm-slim
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8 LANGUAGE=C.UTF-8
 RUN apt-get update -q && apt-get --no-install-recommends install -y git-core libssl3 curl apt-utils ca-certificates
 
-ADD ./script/docker-entrypoint /usr/local/bin/bors-ng-entrypoint
 COPY --from=builder /src/_build/prod/rel/ /app/
 
-RUN curl -Ls https://github.com/bors-ng/dockerize/releases/download/v0.7.12/dockerize-linux-amd64-v0.7.12.tar.gz | \
-    tar xzv -C /usr/local/bin && \
-    /app/bors/bin/bors describe
+RUN /app/bors/bin/bors describe
 
 ENV PORT=4000
 ENV DATABASE_AUTO_MIGRATE=true
 ENV ALLOW_PRIVATE_REPOS=true
 
 WORKDIR /app
-ENTRYPOINT ["/usr/local/bin/bors-ng-entrypoint"]
 CMD ["./bors/bin/bors", "foreground"]
 
 EXPOSE 4000
