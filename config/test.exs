@@ -26,3 +26,5 @@ config :bors, :oauth2, BorsNG.GitHub.OAuth2Mock
 config :bors, :is_test, true
 
 config :bors, :celebrate_new_year, false
+
+config :bors, BorsNG.WebhookParserPlug, webhook_secret: "test-webhook-secret"

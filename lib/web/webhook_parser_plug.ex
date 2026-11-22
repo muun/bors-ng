@@ -1,9 +1,14 @@
 defmodule BorsNG.WebhookParserPlug do
   @moduledoc """
-  Parse the GitHub webhook payload (as JSON) and verify the HMAC-SHA1 signature.
+  Parse the GitHub webhook payload (as JSON) and verify the HMAC-SHA256 signature.
+
+  The secret is read on every request, not at compile time, so a release built
+  without GITHUB_WEBHOOK_SECRET still verifies signatures. Without a secret,
+  every webhook is rejected.
   """
 
   import Plug.Conn
+  require Logger
 
   def init(options) do
     options
@@ -11,41 +16,45 @@ defmodule BorsNG.WebhookParserPlug do
 
   def call(conn, options) do
     if conn.path_info == ["webhook", "github"] do
-      key = Keyword.get(options, :secret)
-      run(conn, options, key)
+      run(conn, secret(options))
     else
       conn
     end
   end
 
-  def run(conn, _options, nil) do
-    conn
+  defp secret(options) do
+    Keyword.get_lazy(options, :secret, fn ->
+      Confex.get_env(:bors, __MODULE__, [])[:webhook_secret]
+    end)
   end
 
-  def run(conn, _options, key) do
-    {:ok, body, _} = read_body(conn)
+  defp run(conn, secret) when secret in [nil, ""] do
+    Logger.error("Rejecting GitHub webhook: no webhook secret is configured")
+    reject(conn, 500, "Webhook secret not configured")
+  end
 
-    signature =
-      case get_req_header(conn, "x-hub-signature") do
-        ["sha1=" <> signature | []] ->
-          {:ok, signature} = Base.decode16(signature, case: :lower)
-          signature
+  defp run(conn, secret) do
+    {:ok, body, conn} = read_body(conn)
 
-        x ->
-          x
-      end
+    expected = "sha256=" <> Base.encode16(:crypto.mac(:hmac, :sha256, secret, body), case: :lower)
 
-    hmac = :crypto.mac(:hmac, :sha, key, body)
-
-    case hmac do
-      ^signature ->
-        %Plug.Conn{conn | body_params: Jason.decode!(body)}
+    case get_req_header(conn, "x-hub-signature-256") do
+      [signature] ->
+        if Plug.Crypto.secure_compare(signature, expected) do
+          %Plug.Conn{conn | body_params: Jason.decode!(body)}
+        else
+          reject(conn, 401, "Invalid signature")
+        end
 
       _ ->
-        conn
-        |> put_resp_content_type("text/plain")
-        |> send_resp(401, "Invalid signature")
-        |> halt
+        reject(conn, 401, "Invalid signature")
     end
+  end
+
+  defp reject(conn, status, message) do
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(status, message)
+    |> halt()
   end
 end

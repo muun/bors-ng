@@ -69,7 +69,7 @@ defmodule BorsNG.WebhookControllerTest do
 
     conn
     |> put_req_header("x-github-event", "pull_request")
-    |> post(webhook_path(conn, :webhook, "github"), body_params)
+    |> post_signed_webhook(body_params)
 
     patch2 = Repo.get!(Patch, patch.id)
     assert "U" == patch2.title
@@ -117,7 +117,7 @@ defmodule BorsNG.WebhookControllerTest do
 
     conn
     |> put_req_header("x-github-event", "pull_request")
-    |> post(webhook_path(conn, :webhook, "github"), body_params)
+    |> post_signed_webhook(body_params)
 
     patch2 = Repo.get!(Patch, patch.id)
     assert "B" == patch2.commit
@@ -199,7 +199,7 @@ defmodule BorsNG.WebhookControllerTest do
 
     conn
     |> put_req_header("x-github-event", "pull_request")
-    |> post(webhook_path(conn, :webhook, "github"), body_params)
+    |> post_signed_webhook(body_params)
 
     wait_until_other_branch_is_removed()
 
@@ -224,5 +224,15 @@ defmodule BorsNG.WebhookControllerTest do
     else
       wait_until_other_branch_is_removed()
     end
+  end
+
+  defp post_signed_webhook(conn, body_params) do
+    body = Jason.encode!(body_params)
+    digest = :crypto.mac(:hmac, :sha256, "test-webhook-secret", body)
+
+    conn
+    |> put_req_header("content-type", "application/json")
+    |> put_req_header("x-hub-signature-256", "sha256=" <> Base.encode16(digest, case: :lower))
+    |> post(webhook_path(conn, :webhook, "github"), body)
   end
 end
